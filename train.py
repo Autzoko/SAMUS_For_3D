@@ -135,7 +135,7 @@ def main():
     criterion = get_criterion(modelname=args.modelname, opt=opt)
 
     pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print("Total_params: {}".format(pytorch_total_params))
+    total_params = sum(p.numel() for p in model.parameters())
 
     #  ========================================================================= begin to train the model ============================================================================
     iter_num = 0
@@ -151,13 +151,29 @@ def main():
             steps_per_epoch = _n_samples // opt.batch_size
         else:
             steps_per_epoch = 3000 // opt.batch_size
-        print(f"Estimated steps_per_epoch: {steps_per_epoch}")
     max_iterations = opt.epochs * steps_per_epoch
+
+    # Print training config summary
+    print("\n" + "=" * 60)
+    print(f"  Model:            {args.modelname}")
+    print(f"  Task:             {args.task}")
+    print(f"  Trainable params: {pytorch_total_params:,} / {total_params:,} ({100*pytorch_total_params/total_params:.1f}%)")
+    print(f"  Batch size:       {opt.batch_size}")
+    print(f"  Learning rate:    {args.base_lr}")
+    print(f"  Epochs:           {opt.epochs}")
+    print(f"  Steps/epoch:      {steps_per_epoch}")
+    print(f"  Total iterations: {max_iterations:,}")
+    print(f"  Warmup:           {args.warmup} ({args.warmup_period} iters)")
+    print(f"  Save path:        {opt.save_path}")
+    print("=" * 60 + "\n")
+
     best_dice, loss_log, dice_log = 0.0, np.zeros(opt.epochs+1), np.zeros(opt.epochs+1)
+    train_start = time.time()
     for epoch in range(opt.epochs):
         #  --------------------------------------------------------- training ---------------------------------------------------------
         model.train()
         train_losses = 0
+        epoch_start = time.time()
         for batch_idx, (datapack) in enumerate(trainloader):
             imgs = datapack['image'].to(dtype = torch.float32, device=opt.device)
             masks = datapack['low_mask'].to(dtype = torch.float32, device=opt.device)
@@ -165,13 +181,12 @@ def main():
             pt = get_click_prompt(datapack, opt)
             # -------------------------------------------------------- forward --------------------------------------------------------
             pred = model(imgs, pt, bbox)
-            train_loss = criterion(pred, masks) 
+            train_loss = criterion(pred, masks)
             # -------------------------------------------------------- backward -------------------------------------------------------
             optimizer.zero_grad()
             train_loss.backward()
             optimizer.step()
             train_losses += train_loss.item()
-            print(train_loss)
             # ------------------------------------------- adjust the learning rate when needed-----------------------------------------
             if args.warmup and iter_num < args.warmup_period:
                 lr_ = args.base_lr * ((iter_num + 1) / args.warmup_period)
@@ -186,19 +201,27 @@ def main():
                         param_group['lr'] = lr_
             iter_num = iter_num + 1
 
+            # Print progress every 50 steps
+            if (batch_idx + 1) % 50 == 0 or batch_idx == 0:
+                cur_lr = optimizer.param_groups[0]['lr']
+                avg_loss = train_losses / (batch_idx + 1)
+                print(f"  [Step {batch_idx+1:>4d}/{steps_per_epoch}] loss: {train_loss.item():.4f}  avg: {avg_loss:.4f}  lr: {cur_lr:.2e}")
+
         #  -------------------------------------------------- log the train progress --------------------------------------------------
-        print('epoch [{}/{}], train loss:{:.4f}'.format(epoch, opt.epochs, train_losses / (batch_idx + 1)))
+        epoch_time = time.time() - epoch_start
+        avg_train_loss = train_losses / (batch_idx + 1)
+        cur_lr = optimizer.param_groups[0]['lr']
+        print(f"\nEpoch {epoch+1}/{opt.epochs} | train_loss: {avg_train_loss:.4f} | lr: {cur_lr:.2e} | time: {epoch_time:.0f}s")
         if args.keep_log:
-            TensorWriter.add_scalar('train_loss', train_losses / (batch_idx + 1), epoch)
-            TensorWriter.add_scalar('learning rate', optimizer.state_dict()['param_groups'][0]['lr'], epoch)
-            loss_log[epoch] = train_losses / (batch_idx + 1)
+            TensorWriter.add_scalar('train_loss', avg_train_loss, epoch)
+            TensorWriter.add_scalar('learning rate', cur_lr, epoch)
+            loss_log[epoch] = avg_train_loss
 
         #  --------------------------------------------------------- evaluation ----------------------------------------------------------
         if epoch % opt.eval_freq == 0:
             model.eval()
             dices, mean_dice, _, val_losses = get_eval(valloader, model, criterion=criterion, opt=opt, args=args)
-            print('epoch [{}/{}], val loss:{:.4f}'.format(epoch, opt.epochs, val_losses))
-            print('epoch [{}/{}], val dice:{:.4f}'.format(epoch, opt.epochs, mean_dice))
+            print(f"           | val_loss:   {val_losses:.4f} | val_dice:  {mean_dice:.4f} | best_dice: {best_dice:.4f}")
             if args.keep_log:
                 TensorWriter.add_scalar('val_loss', val_losses, epoch)
                 TensorWriter.add_scalar('dices', mean_dice, epoch)
@@ -210,6 +233,7 @@ def main():
                     os.makedirs(opt.save_path)
                 save_path = opt.save_path + args.modelname + opt.save_path_code + '%s' % timestr + '_' + str(epoch) + '_' + str(best_dice)
                 torch.save(model.state_dict(), save_path + ".pth", _use_new_zipfile_serialization=False)
+                print(f"           >> New best! Saved to {save_path}.pth")
         if epoch % opt.save_freq == 0 or epoch == (opt.epochs-1):
             if not os.path.isdir(opt.save_path):
                 os.makedirs(opt.save_path)
@@ -222,6 +246,9 @@ def main():
                 with open(opt.tensorboard_path + args.modelname + opt.save_path_code + logtimestr + '/dice.txt', 'w') as f:
                     for i in range(len(dice_log)):
                         f.write(str(dice_log[i])+'\n')
+
+    total_time = time.time() - train_start
+    print(f"\nTraining complete! Total time: {total_time/3600:.1f}h | Best dice: {best_dice:.4f}")
 
 if __name__ == '__main__':
     main()
