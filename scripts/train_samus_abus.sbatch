@@ -43,9 +43,9 @@ echo "Python path: $(which python)"
 echo ""
 
 # Change to project directory
-PROJECT_DIR=/scratch/ll5582/Projects/SAMUS
+PROJECT_DIR=/scratch/ll5582/Projects/SAMUS_For_3D
 DATA_PATH=/scratch/ll5582/Data/Ultrasound/processed_abus_seg
-SHARD_DIR=/scratch/ll5582/Data/Ultrasound/abus_shards
+SHARD_DIR=/scratch/ll5582/Data/Ultrasound/Shards_ABUS
 
 cd ${PROJECT_DIR}
 echo "Changed to directory: $(pwd)"
@@ -97,10 +97,10 @@ python train.py \
     --task ABUS \
     --sam_ckpt checkpoints/samus_pretrained.pth \
     --shard_dir ${SHARD_DIR} \
-    --batch_size 8 \
+    --batch_size 2 \
     --base_lr 1e-4 \
     --warmup True \
-    --warmup_period 250 \
+    --warmup_period 10 \
     -keep_log True
 
 if [ $? -eq 0 ]; then
