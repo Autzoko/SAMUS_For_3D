@@ -1,6 +1,5 @@
 from ast import arg
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '3'
 import argparse
 from pickle import FALSE, TRUE
 from statistics import mode
@@ -46,9 +45,15 @@ def main():
     parser.add_argument('--warmup', type=bool, default=False, help='If activated, warp up the learning from a lower lr to the base_lr') 
     parser.add_argument('--warmup_period', type=int, default=250, help='Warp up iterations, only valid whrn warmup is activated')
     parser.add_argument('-keep_log', type=bool, default=False, help='keep the loss&lr&dice during training or not')
+    parser.add_argument('--data_path', type=str, default=None, help='Override data path from config')
+    parser.add_argument('--shard_dir', type=str, default=None, help='WebDataset shard directory (overrides file-based loading)')
 
     args = parser.parse_args()
-    opt = get_config(args.task) 
+    opt = get_config(args.task)
+    if args.data_path:
+        opt.data_path = args.data_path
+    if args.shard_dir:
+        opt.shard_dir = args.shard_dir
 
     device = torch.device(opt.device)
     if args.keep_log:
@@ -78,10 +83,30 @@ def main():
     tf_train = JointTransform2D(img_size=args.encoder_input_size, low_img_size=args.low_image_size, ori_size=opt.img_size, crop=opt.crop, p_flip=0.0, p_rota=0.5, p_scale=0.5, p_gaussn=0.0,
                                 p_contr=0.5, p_gama=0.5, p_distor=0.0, color_jitter_params=None, long_mask=True)  # image reprocessing
     tf_val = JointTransform2D(img_size=args.encoder_input_size, low_img_size=args.low_image_size, ori_size=opt.img_size, crop=opt.crop, p_flip=0, color_jitter_params=None, long_mask=True)
-    train_dataset = ImageToImage2D(opt.data_path, opt.train_split, tf_train, img_size=args.encoder_input_size)
-    val_dataset = ImageToImage2D(opt.data_path, opt.val_split, tf_val, img_size=args.encoder_input_size)  # return image, mask, and filename
-    trainloader = DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    valloader = DataLoader(val_dataset, batch_size=opt.batch_size, shuffle=False, num_workers=8, pin_memory=True)
+
+    use_wds = args.task == "ABUS" and getattr(opt, 'shard_dir', '') and os.path.isdir(getattr(opt, 'shard_dir', ''))
+
+    if use_wds:
+        from utils.data_abus import build_abus_wds_loader
+        print(f"Using WebDataset shards from: {opt.shard_dir}")
+        _, trainloader = build_abus_wds_loader(
+            opt.shard_dir, 'train', tf_train, img_size=args.encoder_input_size,
+            batch_size=opt.batch_size, num_workers=opt.workers)
+        _, valloader = build_abus_wds_loader(
+            opt.shard_dir, 'val', tf_val, img_size=args.encoder_input_size,
+            batch_size=opt.batch_size, num_workers=opt.workers)
+    elif args.task == "ABUS":
+        from utils.data_abus import ABUSDataset
+        print(f"Using direct file loading from: {opt.data_path}")
+        train_dataset = ABUSDataset(opt.data_path, 'train', tf_train, img_size=args.encoder_input_size)
+        val_dataset = ABUSDataset(opt.data_path, 'val', tf_val, img_size=args.encoder_input_size)
+        trainloader = DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=8, pin_memory=True)
+        valloader = DataLoader(val_dataset, batch_size=opt.batch_size, shuffle=False, num_workers=8, pin_memory=True)
+    else:
+        train_dataset = ImageToImage2D(opt.data_path, opt.train_split, tf_train, img_size=args.encoder_input_size)
+        val_dataset = ImageToImage2D(opt.data_path, opt.val_split, tf_val, img_size=args.encoder_input_size)
+        trainloader = DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True, num_workers=8, pin_memory=True)
+        valloader = DataLoader(val_dataset, batch_size=opt.batch_size, shuffle=False, num_workers=8, pin_memory=True)
 
     model.to(device)
     if opt.pre_trained:

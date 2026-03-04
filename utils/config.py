@@ -130,6 +130,38 @@ class Config_CAMUS:
     visual = False
     modelname = "SAM"
 
+class Config_ABUS:
+    data_path = "/Volumes/Lang/Research/Data/3D Ultrasound/processed_abus_seg"
+    shard_dir = ""                   # WebDataset shard dir (set via --shard_dir)
+    save_path = "./checkpoints/ABUS/"
+    result_path = "./result/ABUS/"
+    tensorboard_path = "./tensorboard/ABUS/"
+    load_path = "./checkpoints/samus_pretrained.pth"
+    save_path_code = "_"
+
+    workers = 4
+    epochs = 200
+    batch_size = 8
+    learning_rate = 1e-4
+    momentum = 0.9
+    classes = 2
+    img_size = 256
+    train_split = "train"
+    val_split = "val"
+    test_split = "test"
+    crop = None
+    eval_freq = 1
+    save_freq = 50
+    device = "cuda"
+    cuda = "on"
+    gray = "yes"
+    img_channel = 1
+    eval_mode = "mask_slice"
+    pre_trained = False
+    mode = "train"
+    visual = False
+    modelname = "AutoSAMUS"
+
 # ==================================================================================================
 def get_config(task="US30K"):
     if task == "US30K":
@@ -140,5 +172,7 @@ def get_config(task="US30K"):
         return Config_BUSI()
     elif task == "CAMUS":
         return Config_CAMUS()
+    elif task == "ABUS":
+        return Config_ABUS()
     else:
         assert("We do not have the related dataset, please choose another task.")
