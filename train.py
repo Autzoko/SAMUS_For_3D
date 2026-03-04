@@ -139,7 +139,20 @@ def main():
 
     #  ========================================================================= begin to train the model ============================================================================
     iter_num = 0
-    max_iterations = opt.epochs * len(trainloader)
+    # WebDataset-based DataLoader doesn't support len(); estimate from shard index
+    try:
+        steps_per_epoch = len(trainloader)
+    except TypeError:
+        import json as _json
+        _idx_path = os.path.join(getattr(opt, 'shard_dir', ''), 'train', 'index.json')
+        if os.path.isfile(_idx_path):
+            with open(_idx_path) as _f:
+                _n_samples = _json.load(_f).get('n_samples', 3000)
+            steps_per_epoch = _n_samples // opt.batch_size
+        else:
+            steps_per_epoch = 3000 // opt.batch_size
+        print(f"Estimated steps_per_epoch: {steps_per_epoch}")
+    max_iterations = opt.epochs * steps_per_epoch
     best_dice, loss_log, dice_log = 0.0, np.zeros(opt.epochs+1), np.zeros(opt.epochs+1)
     for epoch in range(opt.epochs):
         #  --------------------------------------------------------- training ---------------------------------------------------------
