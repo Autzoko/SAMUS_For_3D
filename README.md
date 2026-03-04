@@ -3,6 +3,8 @@
 Fork of [SAMUS](https://arxiv.org/pdf/2309.06824.pdf) with additions for training
 AutoSAMUS on 3D ABUS (Automated Breast Ultrasound) 2D slices.
 
+## Two-Stage Training Pipeline
+
 ```
 Raw ABUS 3D volumes
     |
@@ -11,10 +13,16 @@ Preprocessed 2D slices (only lesion-containing)
     |  create_abus_shards.py
     v
 WebDataset .tar shards (train/val/test)
-    |  train.py --modelname AutoSAMUS --task ABUS
+    |
+    |  Stage 1: train.py --modelname SAMUS --task ABUS
     v
-Trained AutoSAMUS checkpoint
-    |  test.py --modelname AutoSAMUS --task ABUS
+ABUS-fine-tuned SAMUS checkpoint
+    |
+    |  Stage 2: train.py --modelname AutoSAMUS --task ABUS --load_path <stage1_ckpt>
+    v
+Trained AutoSAMUS checkpoint (automatic segmentation, no prompts needed)
+    |
+    |  test.py --modelname AutoSAMUS --task ABUS --load_path <stage2_ckpt>
     v
 Evaluation: Dice, IoU, Hausdorff distance
 ```
@@ -28,11 +36,43 @@ Evaluation: Dice, IoU, Hausdorff distance
 - Standard SAM prompt encoder + mask decoder
 
 **AutoSAMUS** adds automatic prompt generation on top of frozen SAMUS:
-- Frozen: image encoder, prompt encoder, mask decoder (loaded from SAMUS pretrained)
+- Frozen: image encoder, prompt encoder, mask decoder
 - Trainable: `Prompt_Embedding_Generator` (cross-attention with 50 object tokens) + `feature_adapter` (4-layer CNN)
 - No manual clicks or bounding boxes needed at inference
 
 Loss: Dice + BCEWithLogits on 128x128 low-resolution logits.
+
+### Checkpoint Chain
+
+```
+SAM ViT-B (sam_vit_b_01ec64.pth)
+    |  pretrained on SA-1B
+    v
+SAMUS pretrained (samus_pretrained.pth)
+    |  fine-tuned on US30K (30K ultrasound images)
+    |  Trainable: cnn_embed, Adapter, upneck, rel_pos
+    v
+Stage 1: SAMUS fine-tuned on ABUS (SAMUS_*.pth)
+    |  fine-tuned on ABUS train set (~3170 slices)
+    |  Trainable: same adapter modules as above
+    v
+Stage 2: AutoSAMUS on ABUS (AutoSAMUS_*.pth)
+    |  loads Stage 1 checkpoint, freezes everything
+    |  Trainable: prompt_generator + feature_adapter only
+    v
+Final model for automatic ABUS lesion segmentation
+```
+
+### What is Trainable at Each Stage
+
+**Stage 1 (SAMUS fine-tuning)**:
+- Frozen: prompt_encoder, mask_decoder
+- Frozen in image_encoder: most ViT blocks
+- Trainable in image_encoder: `cnn_embed`, `post_pos_embed`, `Adapter`, global attention `rel_pos` (layers 2,5,8,11), `upneck`
+
+**Stage 2 (AutoSAMUS training)**:
+- Frozen: entire image_encoder, prompt_encoder, mask_decoder
+- Trainable: `prompt_generator` (Prompt_Embedding_Generator, cross-attention) + `feature_adapter` (4-layer CNN)
 
 ## Dataset
 
@@ -89,7 +129,7 @@ Download pretrained weights before training:
 ```bash
 mkdir -p checkpoints
 
-# SAMUS pretrained (required for AutoSAMUS initialization)
+# SAMUS pretrained (required for both stages)
 pip install gdown
 gdown 1nQjMAvbPeolNpCxQyU_HTiOiB5704pkH -O checkpoints/samus_pretrained.pth
 
@@ -99,18 +139,32 @@ wget -P checkpoints/ https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_0
 
 ## Training
 
-### Quick Start (WebDataset, recommended)
+### Quick Start (two-stage, WebDataset)
 
 ```bash
-# 1. Create shards
+# 0. Create shards
 python create_abus_shards.py \
     --data_root /path/to/processed_abus_seg \
     --output_dir /path/to/abus_shards
 
-# 2. Train AutoSAMUS
+# 1. Stage 1: Fine-tune SAMUS on ABUS (adapts encoder to ABUS domain)
+python train.py \
+    --modelname SAMUS \
+    --task ABUS \
+    --sam_ckpt checkpoints/samus_pretrained.pth \
+    --shard_dir /path/to/abus_shards \
+    --batch_size 8 \
+    --base_lr 1e-4 \
+    --warmup True \
+    --warmup_period 250 \
+    -keep_log True
+
+# 2. Stage 2: Train AutoSAMUS (auto prompt generator on frozen SAMUS)
+#    Use the best SAMUS checkpoint from Stage 1
 python train.py \
     --modelname AutoSAMUS \
     --task ABUS \
+    --load_path checkpoints/ABUS/SAMUS_best.pth \
     --shard_dir /path/to/abus_shards \
     --batch_size 8 \
     --base_lr 1e-4 \
@@ -122,24 +176,33 @@ python train.py \
 ### Direct File Loading (fallback)
 
 ```bash
+# Stage 1
+python train.py \
+    --modelname SAMUS \
+    --task ABUS \
+    --sam_ckpt checkpoints/samus_pretrained.pth \
+    --data_path /path/to/processed_abus_seg \
+    --batch_size 8 --base_lr 1e-4
+
+# Stage 2
 python train.py \
     --modelname AutoSAMUS \
     --task ABUS \
+    --load_path checkpoints/ABUS/SAMUS_best.pth \
     --data_path /path/to/processed_abus_seg \
-    --batch_size 8 \
-    --base_lr 1e-4
+    --batch_size 8 --base_lr 1e-4
 ```
 
 ### HPC (SLURM)
 
 ```bash
-sbatch scripts/train_autosamus_abus.sbatch
-```
+# Stage 1: Fine-tune SAMUS on ABUS
+sbatch scripts/train_samus_abus.sbatch
 
-The sbatch script automatically:
-1. Downloads checkpoints if missing
-2. Creates WebDataset shards if missing
-3. Trains AutoSAMUS with warmup + TensorBoard logging
+# Stage 2: Train AutoSAMUS (after Stage 1 completes)
+# Automatically finds the latest SAMUS checkpoint, or set explicitly:
+SAMUS_CKPT=checkpoints/ABUS/SAMUS_best.pth sbatch scripts/train_autosamus_abus.sbatch
+```
 
 ### Training Configuration
 
@@ -154,26 +217,22 @@ The sbatch script automatically:
 | Loss | Dice + BCE | On 128x128 low-res logits |
 | Eval frequency | Every epoch | Slice-level Dice |
 
-### What is Trainable
-
-AutoSAMUS freezes most of the network. Only these modules have gradients:
-- `prompt_generator` -- Prompt_Embedding_Generator (cross-attention)
-- `feature_adapter` -- 4-layer CNN for dense prompt generation
-
 ## Testing
 
 ```bash
-# Set load_path in utils/config.py to your best checkpoint, then:
+# Test SAMUS (Stage 1, with manual prompts)
 python test.py \
-    --modelname AutoSAMUS \
+    --modelname SAMUS \
     --task ABUS \
+    --load_path checkpoints/ABUS/SAMUS_best.pth \
     --shard_dir /path/to/abus_shards
 
-# Or with direct file loading:
+# Test AutoSAMUS (Stage 2, automatic segmentation)
 python test.py \
     --modelname AutoSAMUS \
     --task ABUS \
-    --data_path /path/to/processed_abus_seg
+    --load_path checkpoints/ABUS/AutoSAMUS_best.pth \
+    --shard_dir /path/to/abus_shards
 ```
 
 Reports: Dice, Hausdorff distance, IoU, Accuracy, Sensitivity, Specificity
@@ -199,7 +258,8 @@ SAMUS/
   train.py                         # Training script
   test.py                          # Evaluation script
   scripts/
-    train_autosamus_abus.sbatch    # SLURM job script
+    train_samus_abus.sbatch        # Stage 1: SAMUS fine-tuning on ABUS
+    train_autosamus_abus.sbatch    # Stage 2: AutoSAMUS training on ABUS
 ```
 
 ## Citation

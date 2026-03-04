@@ -47,6 +47,7 @@ def main():
     parser.add_argument('-keep_log', type=bool, default=False, help='keep the loss&lr&dice during training or not')
     parser.add_argument('--data_path', type=str, default=None, help='Override data path from config')
     parser.add_argument('--shard_dir', type=str, default=None, help='WebDataset shard directory (overrides file-based loading)')
+    parser.add_argument('--load_path', type=str, default=None, help='Override checkpoint load path from config')
 
     args = parser.parse_args()
     opt = get_config(args.task)
@@ -54,6 +55,8 @@ def main():
         opt.data_path = args.data_path
     if args.shard_dir:
         opt.shard_dir = args.shard_dir
+    if args.load_path:
+        opt.load_path = args.load_path
 
     device = torch.device(opt.device)
     if args.keep_log:

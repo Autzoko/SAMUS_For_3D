@@ -131,11 +131,17 @@ class Config_CAMUS:
     modelname = "SAM"
 
 class Config_ABUS:
+    # Two-stage training pipeline:
+    #   Stage 1: python train.py --modelname SAMUS --task ABUS --sam_ckpt checkpoints/samus_pretrained.pth
+    #   Stage 2: python train.py --modelname AutoSAMUS --task ABUS --load_path checkpoints/ABUS/SAMUS_best.pth
     data_path = "/Volumes/Lang/Research/Data/3D Ultrasound/processed_abus_seg"
     shard_dir = ""                   # WebDataset shard dir (set via --shard_dir)
     save_path = "./checkpoints/ABUS/"
     result_path = "./result/ABUS/"
     tensorboard_path = "./tensorboard/ABUS/"
+    # Default load_path for AutoSAMUS (Stage 2): points to SAMUS pretrained.
+    # Override with --load_path to use ABUS-fine-tuned SAMUS from Stage 1.
+    # For Stage 1 (SAMUS), the checkpoint is loaded via --sam_ckpt, not load_path.
     load_path = "./checkpoints/samus_pretrained.pth"
     save_path_code = "_"
 

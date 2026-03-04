@@ -8,6 +8,17 @@
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
 
+# =============================================================================
+# Stage 2: Train AutoSAMUS on ABUS
+#
+# Loads the ABUS-fine-tuned SAMUS checkpoint from Stage 1 and trains the
+# auto prompt generator (Prompt_Embedding_Generator + feature_adapter).
+# Image encoder, prompt encoder, and mask decoder are all frozen.
+#
+# Prerequisites: Run Stage 1 (train_samus_abus.sbatch) first to get the
+# ABUS-fine-tuned SAMUS checkpoint.
+# =============================================================================
+
 # Print job information
 echo "Job ID: $SLURM_JOB_ID"
 echo "Job Name: $SLURM_JOB_NAME"
@@ -33,7 +44,6 @@ echo ""
 
 # Change to project directory
 PROJECT_DIR=/scratch/ll5582/Projects/SAMUS
-DATA_PATH=/scratch/ll5582/Data/Ultrasound/processed_abus_seg
 SHARD_DIR=/scratch/ll5582/Data/Ultrasound/abus_shards
 
 cd ${PROJECT_DIR}
@@ -43,37 +53,28 @@ echo ""
 # Create directories
 mkdir -p logs checkpoints
 
-# Download checkpoints if needed
-if [ ! -f checkpoints/samus_pretrained.pth ]; then
-    echo "Downloading SAMUS pretrained checkpoint..."
-    pip install -q gdown
-    gdown 1nQjMAvbPeolNpCxQyU_HTiOiB5704pkH -O checkpoints/samus_pretrained.pth
-fi
+# ---- Set the Stage 1 checkpoint path ----
+# After running Stage 1, find the best SAMUS checkpoint and set it here.
+# Example: SAMUS_CKPT=checkpoints/ABUS/SAMUS_03041230_150_0.7823.pth
+SAMUS_CKPT=${SAMUS_CKPT:-""}
 
-if [ ! -f checkpoints/sam_vit_b_01ec64.pth ]; then
-    echo "Downloading SAM ViT-B checkpoint..."
-    wget -q -P checkpoints/ https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
-fi
-
-# Create WebDataset shards if not already done
-if [ ! -d "${SHARD_DIR}/train" ]; then
-    echo "Creating WebDataset shards..."
-    python create_abus_shards.py \
-        --data_root ${DATA_PATH} \
-        --output_dir ${SHARD_DIR} \
-        --samples_per_shard 500
-
-    if [ $? -ne 0 ]; then
-        echo "Error: Shard creation failed"
+if [ -z "${SAMUS_CKPT}" ]; then
+    # Auto-find: use the most recent SAMUS checkpoint in checkpoints/ABUS/
+    SAMUS_CKPT=$(ls -t checkpoints/ABUS/SAMUS_*.pth 2>/dev/null | head -1)
+    if [ -z "${SAMUS_CKPT}" ]; then
+        echo "Error: No Stage 1 SAMUS checkpoint found in checkpoints/ABUS/"
+        echo "Run Stage 1 (train_samus_abus.sbatch) first, or set SAMUS_CKPT env var."
         exit 1
     fi
-    echo "Shards created successfully"
-else
-    echo "Using existing shards at ${SHARD_DIR}"
 fi
-echo ""
 
-echo "Starting AutoSAMUS training on ABUS"
+if [ ! -f "${SAMUS_CKPT}" ]; then
+    echo "Error: SAMUS checkpoint not found: ${SAMUS_CKPT}"
+    exit 1
+fi
+
+echo "=== Stage 2: Training AutoSAMUS on ABUS ==="
+echo "Stage 1 checkpoint: ${SAMUS_CKPT}"
 echo "Shard dir: ${SHARD_DIR}"
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 echo ""
@@ -83,6 +84,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 python train.py \
     --modelname AutoSAMUS \
     --task ABUS \
+    --load_path ${SAMUS_CKPT} \
     --shard_dir ${SHARD_DIR} \
     --batch_size 8 \
     --base_lr 1e-4 \
@@ -92,7 +94,8 @@ python train.py \
 
 if [ $? -eq 0 ]; then
     echo ""
-    echo "Training completed successfully!"
+    echo "Stage 2 training completed successfully!"
+    echo "Best checkpoint saved to: checkpoints/ABUS/AutoSAMUS_*.pth"
 else
     echo ""
     echo "Training failed with exit code $?"
