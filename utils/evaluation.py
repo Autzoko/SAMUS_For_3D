@@ -94,7 +94,10 @@ def eval_mask_slice(valloader, model, criterion, opt, args):
 def eval_mask_slice2(valloader, model, criterion, opt, args):
     model.eval()
     val_losses, mean_dice = 0, 0
-    max_slice_number = opt.batch_size * (len(valloader) + 1)
+    try:
+        max_slice_number = opt.batch_size * (len(valloader) + 1)
+    except TypeError:
+        max_slice_number = 10000  # large buffer for WebDataset (no len)
     dices = np.zeros((max_slice_number, opt.classes))
     hds = np.zeros((max_slice_number, opt.classes))
     ious, accs, ses, sps = np.zeros((max_slice_number, opt.classes)), np.zeros((max_slice_number, opt.classes)), np.zeros((max_slice_number, opt.classes)), np.zeros((max_slice_number, opt.classes))
@@ -372,7 +375,10 @@ def eval_patient(valloader, model, criterion, opt, args):
 def eval_slice(valloader, model, criterion, opt, args):
     model.eval()
     val_losses, mean_dice = 0, 0
-    max_slice_number = opt.batch_size * (len(valloader) + 1)
+    try:
+        max_slice_number = opt.batch_size * (len(valloader) + 1)
+    except TypeError:
+        max_slice_number = 10000  # large buffer for WebDataset (no len)
     dices = np.zeros((max_slice_number, opt.classes))
     hds = np.zeros((max_slice_number, opt.classes))
     ious, accs, ses, sps = np.zeros((max_slice_number, opt.classes)), np.zeros((max_slice_number, opt.classes)), np.zeros((max_slice_number, opt.classes)), np.zeros((max_slice_number, opt.classes))
