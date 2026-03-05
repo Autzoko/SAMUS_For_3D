@@ -161,8 +161,8 @@ def main():
     print(f"  Batch size:       {opt.batch_size}")
     print(f"  Learning rate:    {args.base_lr}")
     print(f"  Epochs:           {opt.epochs}")
-    print(f"  Steps/epoch:      {steps_per_epoch}")
-    print(f"  Total iterations: {max_iterations:,}")
+    print(f"  Steps/epoch:      ~{steps_per_epoch} (estimated)")
+    print(f"  Total iterations: ~{max_iterations:,}")
     print(f"  Warmup:           {args.warmup} ({args.warmup_period} iters)")
     print(f"  Save path:        {opt.save_path}")
     print("=" * 60 + "\n")
@@ -205,7 +205,14 @@ def main():
             if (batch_idx + 1) % 50 == 0 or batch_idx == 0:
                 cur_lr = optimizer.param_groups[0]['lr']
                 avg_loss = train_losses / (batch_idx + 1)
-                print(f"  [Step {batch_idx+1:>4d}/{steps_per_epoch}] loss: {train_loss.item():.4f}  avg: {avg_loss:.4f}  lr: {cur_lr:.2e}")
+                print(f"  [Step {batch_idx+1:>4d}] loss: {train_loss.item():.4f}  avg: {avg_loss:.4f}  lr: {cur_lr:.2e}")
+
+        # After first epoch, update steps_per_epoch with actual count
+        actual_steps = batch_idx + 1
+        if epoch == 0 and actual_steps != steps_per_epoch:
+            steps_per_epoch = actual_steps
+            max_iterations = opt.epochs * steps_per_epoch
+            print(f"  (Actual steps/epoch: {steps_per_epoch}, updated total iterations: {max_iterations:,})")
 
         #  -------------------------------------------------- log the train progress --------------------------------------------------
         epoch_time = time.time() - epoch_start

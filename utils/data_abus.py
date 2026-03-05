@@ -145,10 +145,12 @@ def build_abus_wds_loader(shard_dir, split, joint_transform, img_size=256,
 
     dataset = dataset.map(decode_sample)
 
+    # with_epoch(n) yields n *samples*, then stops. DataLoader batches them.
+    # So with_epoch(n_samples) → n_samples // batch_size batches per epoch.
     if epoch_length is not None:
         dataset = dataset.with_epoch(epoch_length)
-    elif n_samples is not None and is_train:
-        dataset = dataset.with_epoch(n_samples // batch_size)
+    elif n_samples is not None:
+        dataset = dataset.with_epoch(n_samples)
 
     loader = DataLoader(
         dataset,
